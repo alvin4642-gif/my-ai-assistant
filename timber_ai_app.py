@@ -2,23 +2,8 @@ import streamlit as st
 import math
 import re
 
-# =========================
-# PAGE SETUP
-# =========================
 st.set_page_config(layout="wide")
-
-st.markdown("""
-<style>
-textarea, input {
-    font-size: 18px !important;
-}
-table {
-    font-size: 16px !important;
-}
-</style>
-""", unsafe_allow_html=True)
-
-st.title("🪵 Timber AI Assistant V7")
+st.title("🪵 Timber AI Assistant V8")
 
 # =========================
 # INPUT
@@ -33,22 +18,15 @@ with col2:
 with col3:
     chengal_rate = st.number_input("Chengal $/ton", value=6000)
 
-# =========================
-# BUTTONS
-# =========================
 colA, colB = st.columns(2)
-
-with colA:
-    generate = st.button("🚀 Generate")
-
-with colB:
-    refresh = st.button("🔄 Refresh")
+generate = colA.button("🚀 Generate")
+refresh = colB.button("🔄 Refresh")
 
 if refresh:
     st.rerun()
 
 # =========================
-# PRICE LIST
+# PLYWOOD PRICE
 # =========================
 plywood_prices = {
     "furniture": {3:16, 6:17, 9:19, 12:24, 15:27, 18:32, 25:52},
@@ -57,35 +35,38 @@ plywood_prices = {
 }
 
 # =========================
-# HELPERS
+# FUNCTIONS
 # =========================
 def mm_to_inch(mm):
-    if 93 <= mm <= 95: return 4
-    if 143 <= mm <= 145: return 6
-    if 193 <= mm <= 195: return 8
-    if 43 <= mm <= 45: return 2
-    if 65 <= mm <= 75: return 3
-    if 293 <= mm <= 295: return 12
     if 18 <= mm <= 25: return 1
-    return round(mm / 25.4)
+    if 40 <= mm <= 50: return 2
+    if 60 <= mm <= 75: return 3
+    if 90 <= mm <= 100: return 4
+    if 140 <= mm <= 150: return 6
+    if 190 <= mm <= 205: return 8
+    if 290 <= mm <= 305: return 12
+    
+    # fallback (CRITICAL FIX)
+    val = round(mm / 25.4)
+    return max(val, 1)  # NEVER allow 0
 
-def standard_length(ft):
-    return 20 if ft == 19 else ft
+def std_length(ft):
+    if ft == 19:
+        return 20
+    return max(ft, 1)  # NEVER allow 0
 
 def calc(thk, wid, length, rate):
-    pcs_per_ton = math.floor(7200 / thk / wid / length)
-    if pcs_per_ton <= 0:
+    # SAFETY CHECK (CRITICAL)
+    if thk == 0 or wid == 0 or length == 0:
         return 0, 0
-    price = round(rate / pcs_per_ton)
-    return pcs_per_ton, price
 
-def color_pcs(pcs):
-    if pcs < 10:
-        return "🔴"
-    elif pcs < 50:
-        return "🟡"
-    else:
-        return "🟢"
+    pcs = math.floor(7200 / thk / wid / length)
+
+    if pcs <= 0:
+        return 0, 0
+
+    price = round(rate / pcs)
+    return pcs, price
 
 # =========================
 # MAIN
@@ -93,106 +74,99 @@ def color_pcs(pcs):
 if generate:
 
     lines = user_input.split("\n")
-    current_species = None
+    current = None
 
     timber_data = {}
-    customer_lines = []
-    total_value = 0
+    reply_lines = []
+    total = 0
     has_timber = False
 
     for line in lines:
-        line_clean = line.strip().lower()
-        if not line_clean:
+        text = line.lower().strip()
+        if not text:
             continue
 
-        # Detect species
-        if "kapur" in line_clean:
-            current_species = "Kapur"
-            rate = kapur_rate
-        elif "balau" in line_clean:
-            current_species = "Balau"
-            rate = balau_rate
-        elif "chengal" in line_clean:
-            current_species = "Chengal"
-            rate = chengal_rate
+        # detect species
+        if "kapur" in text:
+            current = ("Kapur", kapur_rate)
+        elif "balau" in text:
+            current = ("Balau", balau_rate)
+        elif "chengal" in text:
+            current = ("Chengal", chengal_rate)
 
-        # Extract qty
-        qty_match = re.findall(r'(\d+)\s*pcs', line_clean)
+        qty_match = re.findall(r'(\d+)\s*pcs', text)
         qty = int(qty_match[0]) if qty_match else 1
 
-        # =========================
-        # TIMBER LOGIC
-        # =========================
-        match = re.findall(r'(\d+)\s*x\s*(\d+)\s*x\s*(\d+)', line_clean)
+        size_match = re.findall(r'(\d+)\s*x\s*(\d+)\s*x\s*(\d+)', text)
 
-        if match and current_species:
+        # ================= TIMBER =================
+        if size_match and current:
 
             has_timber = True
 
-            mm1 = int(match[0][0])
-            mm2 = int(match[0][1])
-            length = int(match[0][2])
+            mm1 = int(size_match[0][0])
+            mm2 = int(size_match[0][1])
+            ft = int(size_match[0][2])
 
             thk = mm_to_inch(mm1)
             wid = mm_to_inch(mm2)
-            length_std = standard_length(length)
+            length = std_length(ft)
 
-            pcs_per_ton, price = calc(thk, wid, length_std, rate)
+            pcs, price = calc(thk, wid, length, current[1])
+
+            if pcs == 0:
+                reply_lines.append(f"{current[0]} timber size error → check input")
+                continue
 
             line_total = price * qty
-            total_value += line_total
+            total += line_total
 
-            timber_data.setdefault(current_species, []).append([
-                f"{mm1} x {mm2} x {length}ft",
-                f"{thk}x{wid}x{length_std}",
-                rate,
-                f"{color_pcs(pcs_per_ton)} {pcs_per_ton}",
+            timber_data.setdefault(current[0], []).append([
+                f"{mm1} x {mm2} x {ft}ft",
+                f"{thk}x{wid}x{length}",
+                current[1],
+                pcs,
                 price,
                 qty,
                 line_total
             ])
 
-            customer_lines.append(f"{current_species} timber (planed)")
-            customer_lines.append(f"{mm1}mm x {mm2}mm x {length}ft @ ${price}/pcs x {qty} = ${line_total}\n")
+            reply_lines.append(f"{current[0]} timber (planed)")
+            reply_lines.append(f"{mm1}mm x {mm2}mm x {ft}ft @ ${price}/pcs x {qty} = ${line_total}\n")
 
-        # =========================
-        # PLYWOOD LOGIC
-        # =========================
-        if "plywood" in line_clean:
+        # ================= PLYWOOD =================
+        if "plywood" in text:
 
-            if "marine" in line_clean:
+            if "marine" in text:
                 grade = "marine"
-            elif "mr" in line_clean or "floor" in line_clean:
+            elif "mr" in text or "floor" in text:
                 grade = "mr"
             else:
                 grade = "furniture"
 
-            thickness_match = re.findall(r'(\d+\.?\d*)mm', line_clean)
+            thk_match = re.findall(r'(\d+\.?\d*)mm', text)
 
-            for t in thickness_match:
+            for t in thk_match:
                 t = float(t)
-
                 if t in [5, 5.5]:
                     t = 6
-
                 t = int(t)
 
                 if t in plywood_prices[grade]:
 
                     price = plywood_prices[grade][t]
                     line_total = price * qty
-                    total_value += line_total
+                    total += line_total
 
-                    # MOQ warning
                     if grade == "mr" and t == 3 and qty < 10:
-                        customer_lines.append(f"MR plywood {t}mm @ ${price}/pcs (MOQ 10pcs) x {qty} = ${line_total}")
-                        customer_lines.append("⚠ MOQ not met (minimum 10pcs)\n")
+                        reply_lines.append(f"MR plywood {t}mm @ ${price}/pcs (MOQ 10pcs)")
+                        reply_lines.append("⚠ MOQ not met\n")
                     else:
-                        customer_lines.append(f"{grade.upper()} plywood {t}mm @ ${price}/pcs x {qty} = ${line_total}")
+                        reply_lines.append(f"{grade.upper()} plywood {t}mm @ ${price}/pcs x {qty} = ${line_total}")
 
                     timber_data.setdefault("Plywood", []).append([
                         f"{t}mm",
-                        grade.upper(),
+                        grade,
                         "-",
                         "-",
                         price,
@@ -200,37 +174,27 @@ if generate:
                         line_total
                     ])
 
-    # =========================
-    # INTERNAL VIEW
-    # =========================
+    # ================= OUTPUT =================
     st.subheader("🧠 Internal View")
+    for k, v in timber_data.items():
+        st.markdown(f"### {k}")
+        st.table([["Input", "Std", "$/ton", "pcs/ton", "$/pcs", "Qty", "Total"]] + v)
 
-    for species, items in timber_data.items():
-        st.markdown(f"### {species}")
-        st.table(
-            [["Input (mm)", "Std", "$/ton", "pcs/ton", "$/pcs", "Qty", "Total $"]]
-            + items
-        )
-
-    # =========================
-    # CUSTOMER VIEW
-    # =========================
     st.subheader("📩 Customer Reply")
 
-    customer_lines.append(f"\nTotal: ${total_value}\n")
+    reply_lines.append(f"\nTotal: ${total}\n")
 
-    # Timber disclaimer
     if has_timber:
-        customer_lines.append("tolerance +-1~2mm")
-        customer_lines.append("tolerance length +-25~50mm\n")
+        reply_lines.append("tolerance +-1~2mm")
+        reply_lines.append("tolerance length +-25~50mm\n")
 
-    customer_lines.append("Delivery / Self Collection:")
-    customer_lines.append("30 Krani Loop (Blk A) #04-05")
-    customer_lines.append("TimMac @ Kranji S739570")
-    customer_lines.append("Self collect: 9:30–11am / 1:30–4pm")
-    customer_lines.append("Closed Sat, Sun & PH")
+    reply_lines.append("Delivery / Self Collection:")
+    reply_lines.append("30 Krani Loop (Blk A) #04-05")
+    reply_lines.append("TimMac @ Kranji S739570")
+    reply_lines.append("Self collect: 9:30–11am / 1:30–4pm")
+    reply_lines.append("Closed Sat, Sun & PH")
 
-    reply = "\n".join(customer_lines)
+    final_reply = "\n".join(reply_lines)
 
-    st.text_area("Reply (Copy)", reply, height=300)
-    st.download_button("📋 Copy", reply)
+    st.text_area("Reply", final_reply, height=300)
+    st.download_button("📋 Copy", final_reply)
