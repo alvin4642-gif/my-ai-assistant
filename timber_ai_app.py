@@ -3,7 +3,7 @@ import math
 import re
 
 st.set_page_config(layout="wide")
-st.title("🪵 Timber AI Assistant V8")
+st.title("🪵 Timber AI Assistant V9")
 
 # =========================
 # INPUT
@@ -26,7 +26,7 @@ if refresh:
     st.rerun()
 
 # =========================
-# PLYWOOD PRICE
+# PLYWOOD PRICES
 # =========================
 plywood_prices = {
     "furniture": {3:16, 6:17, 9:19, 12:24, 15:27, 18:32, 25:52},
@@ -35,38 +35,50 @@ plywood_prices = {
 }
 
 # =========================
-# FUNCTIONS
+# SIZE CONVERSION (RAW → PLANED)
 # =========================
+inch_to_mm = {
+    1: 20,
+    2: 43,
+    3: 70,
+    4: 93,
+    6: 143,
+    8: 193,
+    12: 293
+}
+
 def mm_to_inch(mm):
-    if 18 <= mm <= 25: return 1
-    if 40 <= mm <= 50: return 2
-    if 60 <= mm <= 75: return 3
-    if 90 <= mm <= 100: return 4
-    if 140 <= mm <= 150: return 6
-    if 190 <= mm <= 205: return 8
-    if 290 <= mm <= 305: return 12
-    
-    # fallback (CRITICAL FIX)
-    val = round(mm / 25.4)
-    return max(val, 1)  # NEVER allow 0
+    for inch, val in inch_to_mm.items():
+        if abs(mm - val) <= 5:
+            return inch
+    return max(round(mm / 25.4), 1)
+
+def safe_int(x):
+    try:
+        return int(x)
+    except:
+        return 1
 
 def std_length(ft):
     if ft == 19:
         return 20
-    return max(ft, 1)  # NEVER allow 0
+    return max(ft, 1)
 
 def calc(thk, wid, length, rate):
-    # SAFETY CHECK (CRITICAL)
     if thk == 0 or wid == 0 or length == 0:
         return 0, 0
-
     pcs = math.floor(7200 / thk / wid / length)
-
     if pcs <= 0:
         return 0, 0
-
     price = round(rate / pcs)
     return pcs, price
+
+def pcs_color(pcs):
+    if pcs < 10:
+        return "🔴"
+    elif pcs < 50:
+        return "🟡"
+    return "🟢"
 
 # =========================
 # MAIN
@@ -94,22 +106,31 @@ if generate:
         elif "chengal" in text:
             current = ("Chengal", chengal_rate)
 
-        qty_match = re.findall(r'(\d+)\s*pcs', text)
-        qty = int(qty_match[0]) if qty_match else 1
-
-        size_match = re.findall(r'(\d+)\s*x\s*(\d+)\s*x\s*(\d+)', text)
+        # qty
+        qty_match = re.findall(r'(\d+)\s*(pcs|nos|pieces|sheets?)', text)
+        qty = int(qty_match[0][0]) if qty_match else 1
 
         # ================= TIMBER =================
+        size_match = re.findall(r'(\d+)\s*x\s*(\d+)\s*x\s*(\d+)', text)
+
         if size_match and current:
 
             has_timber = True
 
-            mm1 = int(size_match[0][0])
-            mm2 = int(size_match[0][1])
+            v1 = int(size_match[0][0])
+            v2 = int(size_match[0][1])
             ft = int(size_match[0][2])
 
-            thk = mm_to_inch(mm1)
-            wid = mm_to_inch(mm2)
+            # detect mixed / inch / mm
+            if "mm" in text:
+                # mm input
+                thk = mm_to_inch(v1)
+                wid = mm_to_inch(v2)
+            else:
+                # inch input or mixed → assume inch if small value
+                thk = v1 if v1 <= 12 else mm_to_inch(v1)
+                wid = v2 if v2 <= 12 else mm_to_inch(v2)
+
             length = std_length(ft)
 
             pcs, price = calc(thk, wid, length, current[1])
@@ -121,11 +142,15 @@ if generate:
             line_total = price * qty
             total += line_total
 
+            # convert to planed mm for customer
+            mm1 = inch_to_mm.get(thk, thk * 25)
+            mm2 = inch_to_mm.get(wid, wid * 25)
+
             timber_data.setdefault(current[0], []).append([
-                f"{mm1} x {mm2} x {ft}ft",
+                f"{v1} x {v2} x {ft}",
                 f"{thk}x{wid}x{length}",
                 current[1],
-                pcs,
+                f"{pcs_color(pcs)} {pcs}",
                 price,
                 qty,
                 line_total
@@ -135,7 +160,7 @@ if generate:
             reply_lines.append(f"{mm1}mm x {mm2}mm x {ft}ft @ ${price}/pcs x {qty} = ${line_total}\n")
 
         # ================= PLYWOOD =================
-        if "plywood" in text:
+        if "plywood" in text or "plywod" in text:
 
             if "marine" in text:
                 grade = "marine"
@@ -166,7 +191,7 @@ if generate:
 
                     timber_data.setdefault("Plywood", []).append([
                         f"{t}mm",
-                        grade,
+                        grade.upper(),
                         "-",
                         "-",
                         price,
@@ -196,5 +221,5 @@ if generate:
 
     final_reply = "\n".join(reply_lines)
 
-    st.text_area("Reply", final_reply, height=300)
+    st.text_area("Reply (Copy)", final_reply, height=300)
     st.download_button("📋 Copy", final_reply)
